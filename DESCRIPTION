@@ -1,0 +1,21 @@
+Package: demovuln
+Type: Package
+Title: Demographic Vulnerability Metrics for Matrix Population Models
+Version: 0.1.0
+Authors@R: c(person(given = "Alex", family = "Gimenez-Romero", role = c("aut", "cre"), email = "alexeltsar8@gmail.com"))
+Description: Simulates temporally structured perturbations acting on matrix
+    population models and computes population reduction and integrated
+    vulnerability metrics across perturbation regimes. This R implementation is
+    intended as a lightweight companion to the Python package 'demovuln'.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Suggests:
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+URL: https://github.com/agimenezromero/demovuln-r, https://demovuln.readthedocs.io/en/latest/
+BugReports: https://github.com/agimenezromero/demovuln-r/issues
+Config/roxygen2/version: 8.0.0

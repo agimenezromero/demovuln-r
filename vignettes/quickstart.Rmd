@@ -1,0 +1,83 @@
+---
+title: "Quickstart"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Quickstart}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4
+)
+```
+
+# Quickstart
+
+This vignette illustrates the basic use of `demovuln`.
+
+```{r}
+library(demovuln)
+```
+
+We define a simple two-stage projection matrix. Columns are source stages at time `t`, and rows are destination stages at time `t + 1`.
+
+```{r}
+A <- matrix(
+  c(0.0, 0.4,
+    2.0, 0.7),
+  nrow = 2,
+  byrow = FALSE
+)
+
+A
+```
+
+```{r}
+model <- matrix_population_model(
+  A,
+  adult_stages = 2,
+  juvenile_stages = 1
+)
+```
+
+We simulate a perturbation affecting adult survival.
+
+```{r}
+sim <- simulate_dynamics(
+  model,
+  target = "adult_survival",
+  magnitude = 0.25,
+  duration = 1,
+  period = 3,
+  t_max = 50,
+  recovery_steps = 10
+)
+
+sim$reduction
+```
+
+```{r}
+plot(
+  sim$baseline_abundance,
+  type = "l",
+  lwd = 2,
+  xlab = "Time step",
+  ylab = "Relative population size",
+  ylim = range(c(sim$baseline_abundance, sim$abundance))
+)
+
+lines(sim$abundance, lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Baseline", "Perturbed"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
