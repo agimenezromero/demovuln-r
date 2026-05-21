@@ -1,0 +1,25 @@
+bibentry(
+  bibtype = "Manual",
+  title = "{demovuln}: Demographic vulnerability metrics for matrix population models",
+  author = c(
+    person(
+      given = "Alex",
+      family = "Giménez-Romero",
+      comment = c(ORCID = "0000-0003-2796-6801")
+    ),
+    person(
+      given = "Meritxell",
+      family = "Genovart",
+      comment = c(ORCID = "0000-0003-2919-1288")
+    )
+  ),
+  year = "2026",
+  note = "R package version 0.1.0",
+  url = "https://github.com/agimenezromero/demovuln",
+  textVersion = paste(
+    "Giménez-Romero A, Genovart M (2026).",
+    "demovuln: Demographic vulnerability metrics for matrix population models.",
+    "R package version 0.1.0.",
+    "https://github.com/agimenezromero/demovuln"
+  )
+)

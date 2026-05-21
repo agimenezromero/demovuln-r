@@ -139,6 +139,13 @@ Phi = mean(rho)
 
 Example vignettes are available in the `vignettes/` directory.
 
+A complete user tutorial is included in two formats:
+
+- `inst/tutorials/demovuln-tutorial.R`: executable RStudio script with theory, code, and figures.
+- `inst/tutorials/demovuln-tutorial-notebook.Rmd`: RStudio Notebook with the same content.
+- `vignettes/demovuln-tutorial.Rmd`: package vignette version for `browseVignettes("demovuln")`.
+
+
 To install the package and build the vignettes locally:
 
 ```r

@@ -1,0 +1,753 @@
+---
+title: "A complete user-friendly tutorial for demovuln"
+author: "Alex Giménez-Romero"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{A complete user-friendly tutorial for demovuln}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7.5,
+  fig.height = 4.8,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Aim of the tutorial
+
+This tutorial introduces the demographic vulnerability framework implemented in `demovuln`. It is designed to be read sequentially by new users, but each section can also be used as a template for a specific analysis.
+
+The package simulates temporally structured perturbations acting on matrix population models and quantifies the resulting demographic impact. The central output is the integrated vulnerability metric, usually denoted by $\Phi$, which summarizes the mean population reduction across a user-defined perturbation space.
+
+The tutorial covers four elements:
+
+1. the theory behind the framework;
+2. how to define a matrix population model;
+3. how to simulate individual perturbation regimes;
+4. how to explore full perturbation grids, compare demographic targets, and produce publication-ready figures.
+
+# Conceptual background
+
+## Matrix population models
+
+The framework starts from a standard stage-structured matrix population model,
+
+$$
+\mathbf{n}_{t+1} = \mathbf{A}_t \mathbf{n}_t,
+$$
+
+where $\mathbf{n}_t$ is the vector of abundances in each life-history stage at time $t$, and $\mathbf{A}_t$ is the projection matrix. Columns are source stages at time $t$, and rows are destination stages at time $t + 1$. Matrix entries can represent survival, growth, stasis, regression, or fecundity.
+
+In an unperturbed model, $\mathbf{A}_t = \mathbf{A}$. In a perturbed model, selected matrix elements are temporarily reduced.
+
+## Perturbation magnitude, duration, and recurrence
+
+A perturbation is defined by three ingredients.
+
+The first is magnitude, $m$, which is the proportional reduction applied to the selected matrix entries. If a matrix element is $x$, the perturbed value is
+
+$$
+x \longrightarrow (1 - m)x.
+$$
+
+Thus, $m = 0$ means no perturbation and $m = 1$ means a complete reduction of the selected entries.
+
+The second is duration, $d$, which is the number of consecutive projection intervals during which the perturbation remains active. A duration of one projection interval is a pulse perturbation. Larger values correspond to press-like perturbations.
+
+The third is recurrence. In the paper this is described in terms of frequency, usually denoted by $\nu$. In the R implementation the direct simulation argument is `period`, which is the number of projection intervals between the start of consecutive perturbation events. The helper function `perturbation_grid_from_frequencies()` converts frequencies into periods.
+
+## Population reduction
+
+For a given perturbation regime, the package compares the final population size under the perturbed dynamics with the final population size under the unperturbed baseline. The percent population reduction is
+
+$$
+\rho(m,d,\nu) = 100\left(1 - \frac{N_{m,d,\nu}(T)}{N_{0}(T)}\right),
+$$
+
+where $N_{m,d,\nu}(T)$ is the final abundance under the perturbed regime and $N_0(T)$ is the final abundance under the unperturbed baseline over the same time horizon. This comparison makes the metric independent of the arbitrary scale of the initial population vector.
+
+## Integrated vulnerability
+
+The full perturbation space is
+
+$$
+\Omega = \{m,d,\nu\}.
+$$
+
+The integrated vulnerability metric is the average population reduction across all simulated perturbation regimes,
+
+$$
+\Phi = \langle \rho(m,d,\nu) \rangle_{\Omega}.
+$$
+
+In discrete form,
+
+$$
+\Phi = \frac{1}{|\Omega|}\sum_{(m,d,\nu)\in\Omega}\rho(m,d,\nu).
+$$
+
+High values of $\Phi$ indicate high average vulnerability across the perturbation regimes considered. Low values indicate that the population remains comparatively resistant across the same perturbation space.
+
+## What the metric is, and what it is not
+
+The metric is not a classical elasticity or sensitivity of asymptotic growth rate. Instead, it explicitly incorporates finite perturbations, temporal structure, transient dynamics, and recovery after forcing. The same matrix can therefore show different vulnerability values depending on whether perturbations act on adult survival, juvenile survival, fecundity, all entries, or a custom subset of matrix elements.
+
+The package does not decide which perturbation grid is ecologically meaningful. That choice remains part of the biological modelling problem. For comparative work across life histories, durations and simulation horizons are often defined relative to generation time. For management-oriented applications, the same functions can be used with calendar-time horizons instead.
+
+# Installation and packages
+
+Install the package from GitHub with:
+
+```{r install, eval=FALSE}
+install.packages("remotes")
+remotes::install_github("agimenezromero/demovuln-r", build_vignettes = TRUE)
+```
+
+Load `demovuln` and `ggplot2`. The tutorial uses `ggplot2` only for figures; the core framework is implemented in `demovuln`.
+
+```{r packages}
+library(demovuln)
+
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  stop("This tutorial uses ggplot2 for plotting. Install it with install.packages('ggplot2').")
+}
+library(ggplot2)
+```
+
+# Step 1. Define a projection matrix
+
+We use a simple three-stage life cycle with juveniles, subadults, and adults. The matrix follows the standard matrix-population-model convention: columns are source stages at time $t$, and rows are destination stages at time $t+1$.
+
+```{r define-matrix}
+stage_names <- c("Juvenile", "Subadult", "Adult")
+
+A <- matrix(
+  c(
+    0.00, 0.00, 1.60,
+    0.35, 0.55, 0.05,
+    0.00, 0.25, 0.86
+  ),
+  nrow = 3,
+  byrow = TRUE,
+  dimnames = list(
+    destination = stage_names,
+    source = stage_names
+  )
+)
+
+A
+```
+
+Biologically, this matrix contains fecundity from adults into the juvenile class, juvenile survival or growth into the subadult class, subadult stasis and maturation, and adult stasis.
+
+# Step 2. Create a `demovuln` model
+
+The function `matrix_population_model()` stores the projection matrix and defines which entries belong to fecundity, adult survival, and juvenile survival targets.
+
+```{r create-model}
+model <- matrix_population_model(
+  A,
+  fecundity_rows = 1,
+  adult_stages = 3,
+  juvenile_stages = c(1, 2),
+  name = "Example three-stage model"
+)
+
+model$lambda_
+stable_stage_distribution(model)
+```
+
+The argument `fecundity_rows = 1` means that positive entries in the first row are interpreted as fecundity. The adult and juvenile definitions refer to source-stage columns. In this example, adults are column 3 and pre-reproductive stages are columns 1 and 2.
+
+For real empirical matrices, it is often better to define these arguments explicitly rather than relying on automatic inference.
+
+# Step 3. Inspect perturbation targets
+
+`demovuln` supports five target types:
+
+- `adult_survival`: perturb entries associated with adult source stages;
+- `juvenile_survival`: perturb entries associated with juvenile source stages;
+- `fecundity`: perturb fecundity entries;
+- `all`: perturb all entries;
+- `custom`: perturb a user-defined logical mask.
+
+The next plot shows which matrix entries are affected by the default target definitions.
+
+```{r target-masks}
+targets <- c("adult_survival", "juvenile_survival", "fecundity", "all")
+target_labels <- c(
+  adult_survival = "Adult survival",
+  juvenile_survival = "Juvenile survival",
+  fecundity = "Fecundity",
+  all = "All parameters"
+)
+
+mask_to_data <- function(mask, target_label) {
+  idx <- expand.grid(
+    destination = seq_len(nrow(mask)),
+    source = seq_len(ncol(mask))
+  )
+  idx$selected <- as.vector(mask)
+  idx$target <- target_label
+  idx
+}
+
+mask_table <- do.call(
+  rbind,
+  lapply(targets, function(target) {
+    mask <- build_target_mask(model, target = target)
+    mask_to_data(mask, target_labels[[target]])
+  })
+)
+
+mask_table$source_stage <- factor(mask_table$source, labels = stage_names)
+mask_table$destination_stage <- factor(mask_table$destination, labels = stage_names)
+
+p_masks <- ggplot(mask_table, aes(x = source_stage, y = destination_stage, fill = selected)) +
+  geom_tile(color = "grey70") +
+  facet_wrap(~ target, nrow = 1) +
+  scale_y_discrete(limits = rev(stage_names)) +
+  scale_fill_manual(values = c(`FALSE` = "white", `TRUE` = "steelblue")) +
+  labs(
+    x = "Source stage at time t",
+    y = "Destination stage at time t + 1",
+    fill = "Perturbed",
+    title = "Matrix entries selected by each demographic target"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_masks
+```
+
+By default, survival perturbations act on whole source-stage columns. This means that an adult-survival perturbation can also scale adult fecundity if fecundity is in an adult source column. To perturb only non-fecundity entries in adult or juvenile columns, use `survival_affects_fecundity = FALSE`.
+
+```{r survival-affects-fecundity}
+B_with_fecundity <- apply_perturbation(
+  model,
+  target = "adult_survival",
+  magnitude = 0.5,
+  survival_affects_fecundity = TRUE
+)
+
+B_without_fecundity <- apply_perturbation(
+  model,
+  target = "adult_survival",
+  magnitude = 0.5,
+  survival_affects_fecundity = FALSE
+)
+
+B_with_fecundity
+B_without_fecundity
+```
+
+# Step 4. Simulate one perturbation regime
+
+A single simulation requires a target, a magnitude, a duration, a period, a forcing window, and optionally a recovery window.
+
+```{r single-simulation}
+generation_time <- 20
+
+sim_adult <- simulate_dynamics(
+  model,
+  target = "adult_survival",
+  magnitude = 0.30,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  normalize_by_lambda = TRUE
+)
+
+sim_adult$reduction
+```
+
+Here, `duration = 4` means that each perturbation event lasts four projection intervals, and `period = 10` means that a new event starts every ten projection intervals. The forcing window lasts three reference generations, and the recovery window lasts four additional generations.
+
+With `normalize_by_lambda = TRUE`, the unperturbed and perturbed matrices are divided by the dominant eigenvalue of the unperturbed matrix. This removes baseline exponential growth or decline and makes the trajectories easier to compare as relative demographic responses.
+
+```{r single-trajectory-plot}
+trajectory_df <- data.frame(
+  time = seq_along(sim_adult$abundance) - 1,
+  time_generations = (seq_along(sim_adult$abundance) - 1) / generation_time,
+  baseline = sim_adult$baseline_abundance,
+  perturbed = sim_adult$abundance
+)
+
+trajectory_plot_df <- rbind(
+  data.frame(
+    time_generations = trajectory_df$time_generations,
+    abundance = trajectory_df$baseline,
+    scenario = "Unperturbed baseline"
+  ),
+  data.frame(
+    time_generations = trajectory_df$time_generations,
+    abundance = trajectory_df$perturbed,
+    scenario = "Perturbed"
+  )
+)
+
+p_single <- ggplot(trajectory_plot_df, aes(x = time_generations, y = abundance, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  labs(
+    x = "Time (reference generations)",
+    y = "Relative population size",
+    linetype = NULL,
+    title = "One temporally structured perturbation regime"
+  ) +
+  theme_minimal(base_size = 12)
+
+p_single
+```
+
+# Step 5. Compare demographic targets under the same regime
+
+The same perturbation regime can have different consequences depending on the demographic process that is affected.
+
+```{r compare-target-trajectories}
+simulations <- lapply(
+  c("adult_survival", "juvenile_survival", "fecundity"),
+  function(target) {
+    simulate_dynamics(
+      model,
+      target = target,
+      magnitude = 0.30,
+      duration = 4,
+      period = 10,
+      t_max = 3 * generation_time,
+      recovery_steps = 4 * generation_time,
+      normalize_by_lambda = TRUE
+    )
+  }
+)
+names(simulations) <- c("adult_survival", "juvenile_survival", "fecundity")
+
+trajectory_panel_data <- do.call(
+  rbind,
+  lapply(names(simulations), function(target) {
+    sim <- simulations[[target]]
+    time <- seq_along(sim$abundance) - 1
+    rbind(
+      data.frame(
+        time_generations = time / generation_time,
+        abundance = sim$baseline_abundance,
+        scenario = "Unperturbed baseline",
+        target = target_labels[[target]]
+      ),
+      data.frame(
+        time_generations = time / generation_time,
+        abundance = sim$abundance,
+        scenario = "Perturbed",
+        target = target_labels[[target]]
+      )
+    )
+  })
+)
+
+p_trajectories <- ggplot(
+  trajectory_panel_data,
+  aes(x = time_generations, y = abundance, linetype = scenario)
+) +
+  geom_line(linewidth = 0.85) +
+  facet_wrap(~ target, nrow = 1) +
+  labs(
+    x = "Time (reference generations)",
+    y = "Relative population size",
+    linetype = NULL,
+    title = "The same perturbation regime applied to different demographic targets"
+  ) +
+  theme_minimal(base_size = 11)
+
+p_trajectories
+```
+
+The corresponding percent reductions are:
+
+```{r compare-target-reductions}
+regime_reductions <- data.frame(
+  target = target_labels[names(simulations)],
+  population_reduction = vapply(simulations, function(x) x$reduction, numeric(1))
+)
+
+regime_reductions
+```
+
+# Step 6. Define a perturbation grid
+
+A full vulnerability analysis requires a grid of perturbation regimes. The direct constructor is `perturbation_grid()`, which uses magnitudes, durations, and periods.
+
+```{r direct-grid}
+grid_direct <- perturbation_grid(
+  magnitudes = seq(0, 0.8, by = 0.1),
+  durations = seq(0, generation_time, by = 2),
+  periods = c(5, 10, 20, 40)
+)
+
+grid_scenarios(grid_direct)[1:10, ]
+```
+
+If you prefer to think in frequencies per reference generation, use `perturbation_grid_from_frequencies()`. For example, `frequency = 1` means one event per reference generation and `frequency = 4` means four events per reference generation.
+
+```{r frequency-grid}
+frequencies <- c(0.25, 0.5, 1, 2, 4)
+
+grid <- perturbation_grid_from_frequencies(
+  magnitudes = seq(0, 0.8, by = 0.1),
+  durations = seq(0, generation_time, by = 2),
+  frequencies = frequencies,
+  generation_time = generation_time,
+  rounding = "nearest"
+)
+
+frequency_period_table <- data.frame(
+  frequency_per_generation = frequencies,
+  period = pmax(1L, as.integer(round(generation_time / frequencies)))
+)
+
+frequency_period_table
+```
+
+Durations and periods must be expressed in projection intervals. Scenarios with `duration > period` are infeasible because a new event would start before the previous one ends. By default, `run_grid()` skips these regimes.
+
+# Step 7. Run the grid and compute integrated vulnerability
+
+`run_grid()` evaluates all feasible perturbation regimes in the grid and returns a table of population reductions plus the integrated vulnerability metric.
+
+```{r run-grid-one-target}
+out_adult <- run_grid(
+  model,
+  target = "adult_survival",
+  grid = grid,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  normalize_by_lambda = TRUE,
+  skip_infeasible = TRUE
+)
+
+out_adult$vulnerability
+head(out_adult$table)
+```
+
+The returned object contains:
+
+- `table`: one row per simulated perturbation regime;
+- `vulnerability`: the mean population reduction across feasible regimes;
+- `trajectories`: optional individual simulation outputs if `return_trajectories = TRUE`.
+
+# Step 8. Compare vulnerability across all supported targets
+
+The usual workflow is to run the same perturbation grid for several demographic targets.
+
+```{r run-grid-all-targets}
+grid_results <- lapply(targets, function(target) {
+  run_grid(
+    model,
+    target = target,
+    grid = grid,
+    t_max = 3 * generation_time,
+    recovery_steps = 4 * generation_time,
+    normalize_by_lambda = TRUE,
+    skip_infeasible = TRUE
+  )
+})
+names(grid_results) <- targets
+
+vulnerability_table <- data.frame(
+  target = unname(target_labels[targets]),
+  Phi = vapply(grid_results, function(x) x$vulnerability, numeric(1))
+)
+
+vulnerability_table
+```
+
+```{r vulnerability-barplot}
+p_phi <- ggplot(vulnerability_table, aes(x = target, y = Phi)) +
+  geom_col(width = 0.7, fill = "grey40") +
+  labs(
+    x = "Perturbed demographic target",
+    y = expression(Phi),
+    title = "Integrated vulnerability across demographic targets"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+p_phi
+```
+
+# Step 9. Visualize vulnerability surfaces
+
+The full perturbation space is three-dimensional. A useful representation is to fix one dimension and plot the other two. Here we fix `period = generation_time`, corresponding to one event per reference generation, and plot population reduction across magnitude and duration.
+
+```{r grid-table-for-heatmaps}
+grid_table <- do.call(
+  rbind,
+  lapply(targets, function(target) {
+    tab <- grid_results[[target]]$table
+    tab$target <- target_labels[[target]]
+    tab
+  })
+)
+
+heatmap_data <- subset(grid_table, feasible & period == generation_time)
+
+p_heatmap <- ggplot(
+  heatmap_data,
+  aes(x = magnitude, y = duration, fill = population_reduction)
+) +
+  geom_tile() +
+  facet_wrap(~ target, nrow = 2) +
+  scale_fill_gradient(low = "white", high = "firebrick", limits = c(0, 100)) +
+  labs(
+    x = "Perturbation magnitude",
+    y = "Perturbation duration (projection intervals)",
+    fill = "Population\nreduction (%)",
+    title = "Vulnerability surfaces at one event per reference generation"
+  ) +
+  theme_minimal(base_size = 11)
+
+p_heatmap
+```
+
+This figure is often the most useful diagnostic plot. It shows whether high vulnerability is restricted to extreme perturbations or whether moderate perturbations already generate large demographic reductions.
+
+# Step 10. Use a custom perturbation target
+
+Some applications require perturbing a specific set of matrix entries rather than one of the predefined biological categories. For example, suppose we want to perturb only maturation into the adult stage and adult stasis.
+
+```{r custom-target}
+custom_mask <- matrix(
+  FALSE,
+  nrow = nrow(A),
+  ncol = ncol(A),
+  dimnames = dimnames(A)
+)
+custom_mask["Adult", "Subadult"] <- TRUE
+custom_mask["Adult", "Adult"] <- TRUE
+
+custom_mask
+
+A_custom_perturbed <- apply_perturbation(
+  model,
+  target = "custom",
+  custom_mask = custom_mask,
+  magnitude = 0.40
+)
+
+A_custom_perturbed
+```
+
+```{r custom-simulation}
+sim_custom <- simulate_dynamics(
+  model,
+  target = "custom",
+  custom_mask = custom_mask,
+  magnitude = 0.40,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  normalize_by_lambda = TRUE
+)
+
+sim_custom$reduction
+```
+
+The same custom mask can be passed to `run_grid()`.
+
+```{r custom-grid}
+out_custom <- run_grid(
+  model,
+  target = "custom",
+  custom_mask = custom_mask,
+  grid = grid,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  normalize_by_lambda = TRUE
+)
+
+out_custom$vulnerability
+```
+
+# Step 11. Useful options for advanced analyses
+
+## Initial state
+
+By default, simulations start from the stable stage distribution of the unperturbed matrix. A custom initial state can be supplied with `initial_state`.
+
+```{r initial-state-example}
+sim_initial_state <- simulate_dynamics(
+  model,
+  target = "adult_survival",
+  magnitude = 0.30,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  initial_state = c(0.80, 0.15, 0.05),
+  normalize_by_lambda = TRUE
+)
+
+sim_initial_state$reduction
+```
+
+## Returning stage vectors
+
+Set `return_stage_vectors = TRUE` when the stage-level trajectory is needed.
+
+```{r stage-vectors-example}
+sim_stages <- simulate_dynamics(
+  model,
+  target = "juvenile_survival",
+  magnitude = 0.30,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  return_stage_vectors = TRUE
+)
+
+head(sim_stages$stage_vectors)
+```
+
+## Recovery window
+
+By default, perturbations stop after `t_max`, and the system is projected with the unperturbed matrix during `recovery_steps`. If the perturbation schedule should continue during the recovery window, set `force_during_recovery = TRUE`.
+
+```{r recovery-option-example}
+sim_recovery_off <- simulate_dynamics(
+  model,
+  target = "adult_survival",
+  magnitude = 0.30,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  force_during_recovery = FALSE
+)
+
+sim_recovery_on <- simulate_dynamics(
+  model,
+  target = "adult_survival",
+  magnitude = 0.30,
+  duration = 4,
+  period = 10,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time,
+  force_during_recovery = TRUE
+)
+
+c(
+  perturbations_stop_before_recovery = sim_recovery_off$reduction,
+  perturbations_continue_during_recovery = sim_recovery_on$reduction
+)
+```
+
+## Infeasible regimes
+
+If `skip_infeasible = FALSE`, regimes with `duration > period` are kept in the output table and marked as infeasible, with missing population reduction.
+
+```{r infeasible-example}
+grid_with_infeasible <- perturbation_grid(
+  magnitudes = 0.5,
+  durations = c(1, 4, 8),
+  periods = c(2, 5)
+)
+
+out_with_infeasible <- run_grid(
+  model,
+  target = "adult_survival",
+  grid = grid_with_infeasible,
+  t_max = 30,
+  skip_infeasible = FALSE
+)
+
+out_with_infeasible$table
+```
+
+# Step 12. Recommended workflow for empirical analyses
+
+A typical empirical analysis has the following structure.
+
+First, assemble one projection matrix per species, population, or scenario. Check that columns are source stages and rows are destination stages.
+
+Second, define the biological meaning of the stages. In particular, explicitly specify `adult_stages`, `juvenile_stages`, and either `fecundity_rows` or `fecundity_mask`.
+
+Third, decide the perturbation scale. For comparative analyses across species, define `generation_time` externally and use it to set `t_max`, `recovery_steps`, durations, and frequencies. For management applications, use projection intervals directly as calendar time.
+
+Fourth, define the perturbation grid. Keep the grid coarse during model development and increase the resolution only once the workflow is correct.
+
+Fifth, run the same grid for each demographic target. Compare both full vulnerability surfaces and the integrated metric $\Phi$.
+
+Sixth, interpret $\Phi$ only with respect to the perturbation space that was simulated. A species or model with low $\Phi$ under one grid can have high $\Phi$ under another grid if the perturbation regimes are more severe, more recurrent, or targeted at a different demographic process.
+
+# Complete minimal workflow
+
+The whole workflow can be condensed as follows.
+
+```{r minimal-workflow, eval=FALSE}
+library(demovuln)
+
+A <- matrix(
+  c(
+    0.00, 0.00, 1.60,
+    0.35, 0.55, 0.05,
+    0.00, 0.25, 0.86
+  ),
+  nrow = 3,
+  byrow = TRUE
+)
+
+model <- matrix_population_model(
+  A,
+  fecundity_rows = 1,
+  adult_stages = 3,
+  juvenile_stages = c(1, 2)
+)
+
+generation_time <- 20
+
+grid <- perturbation_grid_from_frequencies(
+  magnitudes = seq(0, 0.8, by = 0.1),
+  durations = seq(0, generation_time, by = 2),
+  frequencies = c(0.25, 0.5, 1, 2, 4),
+  generation_time = generation_time
+)
+
+out <- run_grid(
+  model,
+  target = "adult_survival",
+  grid = grid,
+  t_max = 3 * generation_time,
+  recovery_steps = 4 * generation_time
+)
+
+out$vulnerability
+head(out$table)
+```
+
+# Interpretation checklist
+
+Before reporting a vulnerability analysis, check the following points.
+
+1. Are matrix rows and columns correctly oriented?
+2. Are fecundity entries correctly identified?
+3. Are adult and juvenile source stages biologically justified?
+4. Are duration, period, `t_max`, and `recovery_steps` expressed in the same projection interval as the matrix?
+5. Does the perturbation grid reflect the ecological or comparative question?
+6. Is `normalize_by_lambda` appropriate for the intended comparison?
+7. Are you interpreting $\Phi$ as an average over the simulated perturbation space, rather than as an absolute species property?
+
+# Session information
+
+```{r session-info}
+sessionInfo()
+```
