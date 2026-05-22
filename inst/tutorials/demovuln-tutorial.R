@@ -97,8 +97,8 @@
 # What the metric is, and what it is not
 #
 # The metric is not a classical elasticity or sensitivity of asymptotic growth
-# rate. Instead, it explicitly incorporates finite perturbations, temporal
-# structure, transient dynamics, and recovery after forcing. The same matrix can
+# rate. Instead, it explicitly incorporates finite perturbations and temporal
+# structure. The same matrix can
 # therefore show different vulnerability values depending on whether
 # perturbations act on adult survival, juvenile survival, fecundity, all entries,
 # or a custom subset of matrix elements.
