@@ -6,3 +6,6 @@
 ^\.Rproj\.user$
 ^doc$
 ^Meta$
+^inst/tutorials/.*\.ipynb$
+^cran-comments\.md$
+^CITATION\.cff$
